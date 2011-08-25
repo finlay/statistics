@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 -- |
 -- Module    : Statistics.Distribution.Gamma
--- Copyright : (c) 2009 Bryan O'Sullivan
+-- Copyright : (c) 2009, 2011 Bryan O'Sullivan
 -- License   : BSD3
 --
 -- Maintainer  : bos@serpentine.com
@@ -26,7 +26,8 @@ module Statistics.Distribution.Gamma
 
 import Data.Typeable (Typeable)
 import Statistics.Constants (m_huge, m_pos_inf, m_NaN)
-import Statistics.Math (incompleteGamma, pois)
+import Statistics.Distribution.Poisson.Internal as Poisson
+import Statistics.Math (incompleteGamma)
 import qualified Statistics.Distribution as D
 
 -- | The gamma distribution.
@@ -35,7 +36,8 @@ data GammaDistribution = GD {
     , gdScale :: {-# UNPACK #-} !Double -- ^ Scale parameter, &#977;.
     } deriving (Eq, Read, Show, Typeable)
 
--- | Create gamma distrivution. Both shape and scale parameters must be positive.
+-- | Create gamma distribution. Both shape and scale parameters must
+-- be positive.
 gammaDistr :: Double            -- ^ Shape parameter. /k/
            -> Double            -- ^ Scale parameter, &#977;.
            -> GammaDistribution
@@ -67,8 +69,8 @@ density (GD a l) x
   | x <= 0            = 0
   | a == 0            = if x == 0 then m_pos_inf else 0
   | x == 0            = if a < 1 then m_pos_inf else if a > 1 then 0 else 1/l
-  | a < 1             = (pois (x/l) a)*a/x
-  | otherwise         = (pois (x/l) (a-1))/l
+  | a < 1             = Poisson.probability (x/l) a * a / x
+  | otherwise         = Poisson.probability (x/l) (a-1) / l
 {-# INLINE density #-}
 
 cumulative :: GammaDistribution -> Double -> Double
