@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleContexts #-}
 -- |
 -- Module    : Statistics.Test.NonParametric
 -- Copyright : (c) 2010 Neil Brown
@@ -9,25 +10,48 @@
 --
 -- Functions for performing non-parametric tests (i.e. tests without an assumption
 -- of underlying distribution).
+
+-- HADDOCK NOTE
+--   &#8321; is 1 subscript
+--   &#8322; is 2 subscript
 module Statistics.Test.NonParametric
-  (-- * Mann-Whitney U test (non-parametric equivalent to the independent t-test)
-  mannWhitneyU, mannWhitneyUCriticalValue, mannWhitneyUSignificant,
-   -- * Wilcoxon signed-rank matched-pair test (non-parametric equivalent to the paired t-test)
-  wilcoxonMatchedPairSignedRank, wilcoxonMatchedPairSignificant, wilcoxonMatchedPairSignificance, wilcoxonMatchedPairCriticalValue,
-  -- * Wilcoxon rank sum test
-  wilcoxonRankSums) where
+  ( -- * Mann-Whitney U test
+    mannWhitneyUtest
+  , mannWhitneyU
+  , mannWhitneyUCriticalValue
+  , mannWhitneyUSignificant
+    -- ** Wilcoxon rank sum test
+  , wilcoxonRankSums
+    -- * Wilcoxon signed-rank matched-pair test
+  , wilcoxonMatchedPairTest
+  , wilcoxonMatchedPairSignedRank
+  , wilcoxonMatchedPairSignificant
+  , wilcoxonMatchedPairSignificance
+  , wilcoxonMatchedPairCriticalValue
+    -- * Data types
+  , TestType(..)
+  ) where
 
 import Control.Applicative ((<$>))
-import Control.Arrow ((***))
-import Data.Function (on)
-import Data.List (findIndex, groupBy, partition, sortBy)
-import Data.Ord (comparing)
-import qualified Data.Vector.Unboxed as U (length, toList, zipWith)
+import Data.Function       (on)
+import Data.List           (findIndex)
+import Data.Ord            (comparing)
+import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Generic as G
 
-import Statistics.Distribution (quantile)
+import Statistics.Distribution        (quantile)
 import Statistics.Distribution.Normal (standard)
-import Statistics.Math (choose)
-import Statistics.Types (Sample)
+import Statistics.Math                (choose)
+import Statistics.Types               (Sample)
+import Statistics.Function            (sortBy)
+
+
+
+-- | Test type. Exact meaning depends on a specific test. But
+-- generally it's tested whether some statistics is too big (small)
+-- for 'OneTailed' or whether it too big or too small for 'TwoTailed'
+data TestType = OneTailed
+              | TwoTailed
 
 -- | The Wilcoxon Rank Sums Test.
 --
@@ -35,27 +59,25 @@ import Statistics.Types (Sample)
 -- are ordered, and assigned ranks (ties are given their average rank), then these
 -- ranks are summed for each sample.
 --
--- The return value is (W_1, W_2) where W_1 is the sum of ranks of the first sample
--- and W_2 is the sum of ranks of the second sample.  This test is trivially transformed
+-- The return value is (W&#8321;, W&#8322;) where W&#8321; is the sum of ranks of the first sample
+-- and W&#8322; is the sum of ranks of the second sample.  This test is trivially transformed
 -- into the Mann-Whitney U test.  You will probably want to use 'mannWhitneyU'
 -- and the related functions for testing significance, but this function is exposed
 -- for completeness.
 wilcoxonRankSums :: Sample -> Sample -> (Double, Double)
-wilcoxonRankSums xs1 xs2
-  = ((sum . map fst) *** (sum . map fst)) . -- sum the ranks per group
-    partition snd . -- split them back into left and right
-    concatMap mergeRanks . -- merge the ranks of duplicates
-    groupBy ((==) `on` (snd . snd)) . -- group duplicate values
-    zip [1..] . -- give them ranks (duplicates receive different ranks here)
-    sortBy (comparing snd) $ -- sort by their values
-    zip (repeat True) (U.toList xs1) ++ zip (repeat False) (U.toList xs2)
-      -- Tag each sample with an identifier before we merge them
+wilcoxonRankSums xs1 xs2 = ( U.sum ranks1 , U.sum ranks2
+                           )
   where
-    mergeRanks :: [(AbsoluteRank, (Bool, Double))] -> [(AbsoluteRank, Bool)]
-    mergeRanks xs = zip (repeat rank) (map (fst . snd) xs)
-      where
-        -- Ranks are merged by assigning them all the average of their ranks:
-        rank = sum (map fst xs) / fromIntegral (length xs)
+    -- Ranks for each sample
+    (ranks1,ranks2) = splitByTags $ U.zip tags (rank (==) joinSample)
+    -- Sorted and tagged sample
+    (tags,joinSample) = U.unzip
+                      $ sortBy (comparing snd)
+                      $ tagSample True xs1 U.++ tagSample False xs2
+    -- Add tag to a sample
+    tagSample t = U.map ((,) t)
+
+
 
 -- | The Mann-Whitney U Test.
 --
@@ -64,14 +86,16 @@ wilcoxonRankSums xs1 xs2
 -- the Wilcoxon's rank sum test (which is provided as 'wilcoxonRankSums').
 -- The Mann-Whitney U is a simple transform of Wilcoxon's rank sum test.
 --
--- Again confusingly, different sources state reversed definitions for U_1 and U_2,
--- so it is worth being explicit about what this function returns.  Given two samples,
--- the first, xs_1, of size n_1 and the second, xs_2, of size n_2, this function
--- returns (U_1, U_2) where U_1 = W_1 - (n_1*(n_1+1))\/2 and U_2 = W_2 - (n_2*(n_2+1))\/2,
--- where (W_1, W_2) is the return value of @wilcoxonRankSums xs1 xs2@.
+-- Again confusingly, different sources state reversed definitions for U&#8321;
+-- and U&#8322;, so it is worth being explicit about what this function returns.
+-- Given two samples, the first, xs&#8321;, of size n&#8321; and the second, xs&#8322;,
+-- of size n&#8322;, this function returns (U&#8321;, U&#8322;)
+-- where U&#8321; = W&#8321; - (n&#8321;(n&#8321;+1))\/2
+-- and U&#8322; = W&#8322; - (n&#8322;(n&#8322;+1))\/2,
+-- where (W&#8321;, W&#8322;) is the return value of @wilcoxonRankSums xs1 xs2@.
 --
--- Some sources instead state that U_1 and U_2 should be the other way round, often
--- expressing this using U_1' = n_1*n_2 - U_1 (since U_1 + U_2 = n_1*n*2).
+-- Some sources instead state that U&#8321; and U&#8322; should be the other way round, often
+-- expressing this using U&#8321;' = n&#8321;n&#8322; - U&#8321; (since U&#8321; + U&#8322; = n&#8321;n&#8322;).
 --
 -- All of which you probably don't care about if you just feed this into 'mannWhitneyUSignificant'.
 mannWhitneyU :: Sample -> Sample -> (Double, Double)
@@ -81,7 +105,7 @@ mannWhitneyU xs1 xs2
   where
     n1 = fromIntegral $ U.length xs1
     n2 = fromIntegral $ U.length xs2
-    
+
     summedRanks = wilcoxonRankSums xs1 xs2
 
 -- | Calculates the critical value of Mann-Whitney U for the given sample
@@ -97,59 +121,72 @@ mannWhitneyU xs1 xs2
 -- Wilcoxon Distribution Using Linked Lists\", Cheung and Klotz, Statistica Sinica
 -- 7 (1997), <http://www3.stat.sinica.edu.tw/statistica/oldpdf/A7n316.pdf>.
 mannWhitneyUCriticalValue :: (Int, Int) -- ^ The sample size
-                      -> Double -- ^ The p-value (e.g. 0.05) for which you want the critical value.
-                      -> Maybe Int -- ^ The critical value (of U).
+                          -> Double     -- ^ The p-value (e.g. 0.05) for which you want the critical value.
+                          -> Maybe Int  -- ^ The critical value (of U).
 mannWhitneyUCriticalValue (m, n) p
-  | p' <= 1 = Nothing
-  | m < 1 || n < 1 = Nothing
-  | otherwise = findIndex (>= p') $ let
-     firstHalf = map fromIntegral $ take (((m*n)+1)`div`2) $ tail $ alookup !! (m+n-2) !! (min m n - 1)
-       {- Original: [fromIntegral $ a k (m+n) (min m n) | k <- [1..m*n]] -}
-     secondHalf
-       | even (m*n) = reverse firstHalf
-       | otherwise = tail $ reverse firstHalf
-     in firstHalf ++ map (mnCn -) secondHalf
+  | m < 1 || n < 1 = Nothing    -- Sample must be nonempty
+  | p  >= 1        = Nothing    -- Nonsensical p-value
+  | p' <= 1        = Nothing    -- p-value is too small. Null hypothesys couln't be disproved
+  | otherwise      = findIndex (>= p')
+                   $ take (m*n)
+                   $ tail
+                   $ alookup !! (m+n-2) !! (min m n - 1)
   where
     mnCn = (m+n) `choose` n
-    p' = mnCn * p
+    p'   = mnCn * p
 
-{- Original function, without memoisation, from Cheung and Klotz:
-a :: Int -> Int -> Int -> Int
+
+{-
+-- Original function, without memoisation, from Cheung and Klotz:
+-- Double is needed to avoid integer overflows.
+a :: Int -> Int -> Int -> Double
 a u bigN m
-      | u < 0 = 0
-      | u >= (m * smalln) = floor $ fromIntegral bigN `choose` fromIntegral m
-      | m == 1 || smalln == 1 = u + 1
-      | otherwise = a u (bigN - 1) m
-                  + a (u - smalln) (bigN - 1) (m-1)
-  where smalln = bigN - m
+  | u < 0            = 0
+  | u >= m * n       = bigN `choose` m
+  | m == 1 || n == 1 = fromIntegral (u + 1)
+  | otherwise        = a  u      (bigN - 1)  m
+                     + a (u - n) (bigN - 1) (m-1)
+  where
+    n = bigN - m
 -}
 
--- Memoised version of the original a function, above.
+-- Memoised version of the original a function, above. 
+--
+-- Doubles are stored to avoid integer overflow. 32-bit Ints begin to
+-- overflow for bigN as small as 33 (64-bit one at 66) while Double to
+-- go to infinity till bigN=1029
 -- 
+--
 -- outer list is indexed by big N - 2
--- inner list by m (we know m < bigN)
+-- inner list by (m-1) (we know m < bigN)
 -- innermost list by u
 --
--- So: (alookup ! (bigN - 2) ! m ! u) == a u bigN m
-alookup :: [[[Int]]]
+-- So: (alookup !! (bigN - 2) !! (m - 1) ! u) == a u bigN m
+alookup :: [[[Double]]]
 alookup = gen 2 [1 : repeat 2]
   where
     gen bigN predBigNList
-       = let bigNlist = [ let limit = round $ fromIntegral bigN `choose` fromIntegral m
-                          in [amemoed u m | u <- [0..m*(bigN-m)]] ++ repeat limit
-                        | m <- [1..(bigN-1)]] -- has bigN-1 elements
+       = let bigNlist = [ [ amemoed u m
+                          | u <- [0 .. m*(bigN-m)]
+                          ] ++ repeat (bigN `choose` m)
+                        | m <- [1 .. (bigN-1)]] -- has bigN-1 elements
          in bigNlist : gen (bigN+1) bigNlist
       where
-        amemoed :: Int -> Int -> Int
+        amemoed :: Int -> Int -> Double
         amemoed u m
-          | m == 1 || smalln == 1 = u + 1
-          | otherwise = let (predmList : mList : _) = drop (m-2) predBigNList -- m-2 because starts at 1
-                        -- We know that predBigNList has bigN - 2 elements
-                        -- (and we know that smalln > 1 therefore bigN > m + 1)
-                        -- So bigN - 2 >= m, i.e. predBigNList must have at least m elements
-                        -- elements, so dropping (m-2) must leave at least 2
-                        in (mList !! u) + (if u < smalln then 0 else predmList !! (u - smalln))
-          where smalln = bigN - m
+          | m == 1 || n == 1 = fromIntegral (u + 1)
+          | otherwise        = mList !! u
+                             + if u < n then 0 else predmList !! (u-n)
+          where
+            n = bigN - m
+            (predmList : mList : _) = drop (m-2) predBigNList
+            -- Lists for m-1 and m respectively. i-th list correspond to m=i+1
+            --
+            -- We know that predBigNList has bigN - 2 elements
+            -- (and we know that n > 1 therefore bigN > m + 1)
+            -- So bigN - 2 >= m, i.e. predBigNList must have at least m elements
+            -- elements, so dropping (m-2) must leave at least 2
+
 
 -- | Calculates whether the Mann Whitney U test is significant.
 --
@@ -159,32 +196,53 @@ alookup = gen 2 [1 : repeat 2]
 --
 -- If you use a one-tailed test, the test indicates whether the first sample is
 -- significantly larger than the second.  If you want the opposite, simply reverse
--- the order in both the sample size and the (U_1, U_2) pairs.
-mannWhitneyUSignificant :: Bool -- ^ Perform one-tailed test (see description above).
-                    -> (Int, Int)  -- ^ The sample size from which the (U_1,U_2) values were derived.
-                    -> Double -- ^ The p-value at which to test (e.g. 0.05)
-                    -> (Double, Double) -- ^ The (U_1, U_2) values from 'mannWhitneyU'.
-                    -> Maybe Bool -- ^ Just True if the test is significant, Just
-                                  -- False if it is not, and Nothing if the sample
-                                  -- was too small to make a decision.
-mannWhitneyUSignificant oneTail (in1, in2) p (u1, u2)
-  | in1 > 20 || in2 > 20 --Use normal approximation
---     = (n1*(n1+1))/2 - u1 - (n1*(n1+n2))/2
---     = (n1*(n1+1))/2 - (-2*u1 + n1*(n1+n2))/2
---     = (n1*(n1+1) - 2*u1 + n1*(n1+n2))/2
---     = (n1*(2*n1 + n2 + 1) - 2*u1)/2
-       = let num = (n1*(2*n1 + n2 + 1)) / 2 - u1
-             denom = sqrt $ n1*n2*(n1 + n2 + 1) / 12
-             z = num / denom
-             zcrit = quantile standard (1 - if oneTail then p else p/2)
-         in Just $ (if oneTail then z else abs z) > zcrit
+-- the order in both the sample size and the (U&#8321;, U&#8322;) pairs.
+mannWhitneyUSignificant ::
+     TestType         -- ^ Perform one-tailed test (see description above).
+  -> (Int, Int)       -- ^ The samples' size from which the (U&#8321;,U&#8322;) values were derived.
+  -> Double           -- ^ The p-value at which to test (e.g. 0.05)
+  -> (Double, Double) -- ^ The (U&#8321;, U&#8322;) values from 'mannWhitneyU'.
+  -> Maybe Bool       -- ^ Just True if the test is significant, Just
+                      --   False if it is not, and Nothing if the sample
+                      --   was too small to make a decision.
+mannWhitneyUSignificant test (in1, in2) p (u1, u2)
+   --Use normal approximation
+  | in1 > 20 || in2 > 20 =
+    let mean  = n1 * n2 / 2
+        sigma = sqrt $ n1*n2*(n1 + n2 + 1) / 12
+        z     = (mean - u1) / sigma
+    in Just $ case test of
+                OneTailed -> z     < quantile standard  p
+                TwoTailed -> abs z > abs (quantile standard (p/2))
+  -- Use exact critical value
   | otherwise = do crit <- fromIntegral <$> mannWhitneyUCriticalValue (in1, in2) p
-                   return $ if oneTail
-                              then u2 <= crit
-                              else min u1 u2 <= crit
+                   return $ case test of
+                              OneTailed -> u2        <= crit
+                              TwoTailed -> min u1 u2 <= crit
   where
     n1 = fromIntegral in1
     n2 = fromIntegral in2
+
+
+-- | Perform Mann-Whitney U Test for two samples and required
+-- significance. For additional information check documentation of
+-- 'mannWhitneyU' and 'mannWhitneyUSignificant'. This is just a helper
+-- function.
+--
+-- One-tailed test checks whether first sample is significantly larger
+-- than second. Two-tailed whether they are significantly different.
+mannWhitneyUtest :: TestType    -- ^ Perform one-tailed test (see description above).
+                 -> Double      -- ^ The p-value at which to test (e.g. 0.05)
+                 -> Sample      -- ^ First sample
+                 -> Sample      -- ^ Second sample
+                 -> Maybe Bool  -- ^ Just True if the test is significant, Just
+                                --   False if it is not, and Nothing if the sample
+                                --   was too small to make a decision.
+mannWhitneyUtest ontTail p smp1 smp2 =
+  mannWhitneyUSignificant ontTail (n1,n2) p $ mannWhitneyU smp1 smp2
+    where
+      n1 = U.length smp1
+      n2 = U.length smp2
 
 -- | The Wilcoxon matched-pairs signed-rank test.
 --
@@ -193,40 +251,24 @@ mannWhitneyUSignificant oneTail (in1, in2) p (u1, u2)
 -- the sum of negative ranks (the ranks of the differences where the second parameter is higher).
 -- These values mean little by themselves, and should be combined with the 'wilcoxonSignificant'
 -- function in this module to get a meaningful result.
--- 
+--
 -- The samples are zipped together: if one is longer than the other, both are truncated
 -- to the the length of the shorter sample.
 --
 -- Note that: wilcoxonMatchedPairSignedRank == (\(x, y) -> (y, x)) . flip wilcoxonMatchedPairSignedRank
 wilcoxonMatchedPairSignedRank :: Sample -> Sample -> (Double, Double)
-wilcoxonMatchedPairSignedRank a b
-  -- Best to read this function bottom to top:
-  = (sum *** sum) . -- Sum the positive and negative ranks separately.
-    partition (> 0) . -- Split the ranks into positive and negative.  None of the
-                      -- ranks can be zero.
-    concatMap mergeRanks . -- Then merge the ranks for any duplicates by taking
-                           -- the average of the ranks, and also make the rank
-                           -- into a signed rank
-    groupBy ((==) `on` abs . snd) . -- Now group any duplicates together
-                                    -- Note: duplicate means same absolute difference
-    zip [1..] . -- Add a rank (note: at this stage, duplicates will get different ranks)
-    dropWhile (== 0) . -- Remove any differences that are zero (i.e. ties in the
-                       -- original data).  We know they must be at the head of
-                       -- the list because we just sorted it, so dropWhile not filter
-    sortBy (comparing abs) . -- Sort the differences by absolute difference
-    U.toList $ -- Convert to a list (could be done later in the pipeline?)
-    U.zipWith (-) a b -- Work out differences
+wilcoxonMatchedPairSignedRank a b = (          U.sum ranks1
+                                    , negate $ U.sum ranks2
+                                    )
   where
-    mergeRanks :: [(AbsoluteRank, Double)] -> [SignedRank]
-    mergeRanks xs = map ((* rank) . signum . snd) xs
-      -- Note that signum above will always be 1 or -1; any zero differences will
-      -- have been removed before this function is called.
-      where
-        -- Ranks are merged by assigning them all the average of their ranks:
-        rank = sum (map fst xs) / fromIntegral (length xs)
+    (ranks1, ranks2) = splitByTags
+                     $ U.zip tags (rank ((==) `on` abs) diffs)
+    (tags,diffs) = U.unzip
+                 $ U.map (\x -> (x>0 , x))   -- Attack tags to distribution elements
+                 $ U.filter  (/= 0.0)        -- Remove equal elements
+                 $ sortBy (comparing abs)    -- Sort the differences by absolute difference
+                 $ U.zipWith (-) a b         -- Work out differences
 
-type AbsoluteRank = Double
-type SignedRank = Double
 
 -- | The coefficients for x^0, x^1, x^2, etc, in the expression
 -- \prod_{r=1}^s (1 + x^r).  See the Mitic paper for details.
@@ -257,29 +299,31 @@ summedCoefficients = map fromIntegral . scanl1 (+) . coefficients
 -- is significant at the given level.
 --
 -- This function can perform a one-tailed or two-tailed test.  If the first
--- parameter to this function is False, the test is performed two-tailed to
+-- parameter to this function is 'TwoTailed', the test is performed two-tailed to
 -- check if the two samples differ significantly.  If the first parameter is
--- True, the check is performed one-tailed to decide whether the first sample
+-- 'OneTailed', the check is performed one-tailed to decide whether the first sample
 -- (i.e. the first sample you passed to 'wilcoxonMatchedPairSignedRank') is
 -- greater than the second sample (i.e. the second sample you passed to
 -- 'wilcoxonMatchedPairSignedRank').  If you wish to perform a one-tailed test
 -- in the opposite direction, you can either pass the parameters in a different
 -- order to 'wilcoxonMatchedPairSignedRank', or simply swap the values in the resulting
 -- pair before passing them to this function.
-wilcoxonMatchedPairSignificant :: Bool -- ^ Perform one-tailed test (see description above).
-                    -> Int  -- ^ The sample size from which the (T+,T-) values were derived.
-                    -> Double -- ^ The p-value at which to test (e.g. 0.05)
-                    -> (Double, Double) -- ^ The (T+, T-) values from 'wilcoxonMatchedPairSignedRank'.
-                    -> Maybe Bool -- ^ Just True if the test is significant, Just
-                                  -- False if it is not, and Nothing if the sample
-                                  -- was too small to make a decision.
-wilcoxonMatchedPairSignificant oneTail sampleSize p (tPlus, tMinus)
-  -- According to my nearest book (Understanding Research Methods and Statistics
-  -- by Gary W. Heiman, p590), to check that the first sample is bigger you must
-  -- use the absolute value of T- for a one-tailed check:
-  | oneTail = ((abs tMinus <=) . fromIntegral) <$> wilcoxonMatchedPairCriticalValue sampleSize p
-  -- Otherwise you must use the value of T+ and T- with the smallest absolute value:
-  | otherwise = ((t <=) . fromIntegral) <$> wilcoxonMatchedPairCriticalValue sampleSize (p/2)
+wilcoxonMatchedPairSignificant ::
+     TestType            -- ^ Perform one-tailed test (see description above).
+  -> Int                 -- ^ The sample size from which the (T+,T-) values were derived.
+  -> Double              -- ^ The p-value at which to test (e.g. 0.05)
+  -> (Double, Double)    -- ^ The (T+, T-) values from 'wilcoxonMatchedPairSignedRank'.
+  -> Maybe Bool          -- ^ Just True if the test is significant, Just
+                         --   False if it is not, and Nothing if the sample
+                         --   was too small to make a decision.
+wilcoxonMatchedPairSignificant test sampleSize p (tPlus, tMinus) =
+  case test of
+    -- According to my nearest book (Understanding Research Methods and Statistics
+    -- by Gary W. Heiman, p590), to check that the first sample is bigger you must
+    -- use the absolute value of T- for a one-tailed check:
+    OneTailed -> ((abs tMinus <=) . fromIntegral) <$> wilcoxonMatchedPairCriticalValue sampleSize p
+    -- Otherwise you must use the value of T+ and T- with the smallest absolute value:
+    TwoTailed -> ((t <=) . fromIntegral) <$> wilcoxonMatchedPairCriticalValue sampleSize (p/2)
   where
     t = min (abs tPlus) (abs tMinus)
 
@@ -300,10 +344,11 @@ wilcoxonMatchedPairSignificant oneTail sampleSize p (tPlus, tMinus)
 -- here: <http://www.mathematica-journal.com/issue/v6i3/article/mitic/contents/63mitic.pdf>.
 -- According to that paper, the results may differ from other published lookup tables, but
 -- (Mitic claims) the values obtained by this function will be the correct ones.
-wilcoxonMatchedPairCriticalValue :: Int -- ^ The sample size
-                      -> Double -- ^ The p-value (e.g. 0.05) for which you want the critical value.
-                      -> Maybe Int -- ^ The critical value (of T), or Nothing if
-                                   -- the sample is too small to make a decision.
+wilcoxonMatchedPairCriticalValue ::
+     Int                -- ^ The sample size
+  -> Double             -- ^ The p-value (e.g. 0.05) for which you want the critical value.
+  -> Maybe Int          -- ^ The critical value (of T), or Nothing if
+                        --   the sample is too small to make a decision.
 wilcoxonMatchedPairCriticalValue sampleSize p
   = case critical of
       Just n | n < 0 -> Nothing
@@ -317,9 +362,71 @@ wilcoxonMatchedPairCriticalValue sampleSize p
 -- size and a T value from the Wilcoxon signed-rank matched-pairs test.
 --
 -- See the notes on 'wilcoxonCriticalValue' for how this is calculated.
-wilcoxonMatchedPairSignificance :: Int -- ^ The sample size
-                     -> Double -- ^ The value of T for which you want the significance.
-                     -> Double -- ^^ The significance (p-value).
-wilcoxonMatchedPairSignificance sampleSize rank
-  = (summedCoefficients sampleSize !! floor rank) / 2 ** fromIntegral sampleSize
+wilcoxonMatchedPairSignificance :: Int    -- ^ The sample size
+                                -> Double -- ^ The value of T for which you want the significance.
+                                -> Double -- ^ The significance (p-value).
+wilcoxonMatchedPairSignificance sampleSize rnk
+  = (summedCoefficients sampleSize !! floor rnk) / 2 ** fromIntegral sampleSize
 
+-- | The Wilcoxon matched-pairs signed-rank test. The samples are
+-- zipped together: if one is longer than the other, both are
+-- truncated to the the length of the shorter sample.
+--
+-- For one-tailed test it tests whether first sample is significantly
+-- greater than the second. For two-tailed it checks whether they
+-- significantly differ
+--
+-- Check 'wilcoxonMatchedPairSignedRank' and
+-- 'wilcoxonMatchedPairSignificant' for additional information.
+wilcoxonMatchedPairTest :: TestType   -- ^ Perform one-tailed test.
+                        -> Double     -- ^ The p-value at which to test (e.g. 0.05)
+                        -> Sample     -- ^ First sample
+                        -> Sample     -- ^ Second sample
+                        -> Maybe Bool -- ^ Just True if the test is significant, Just
+                                      --   False if it is not, and Nothing if the sample
+                                      --   was too small to make a decision.
+wilcoxonMatchedPairTest test p smp1 smp2 =
+  wilcoxonMatchedPairSignificant test (min (U.length smp1) (U.length smp2)) p
+    $ wilcoxonMatchedPairSignedRank smp1 smp2
+
+
+
+----------------------------------------------------------------
+-- Helpers
+
+-- Private data type for unfolding
+data Rank v a = Rank { rankCnt :: Int        -- Number of ranks to return
+                     , rankVal :: Double     -- Rank to return
+                     , rankNum :: Double     -- Current rank
+                     , rankVec :: v a        -- Remaining vector
+                     }
+
+-- Calculate rank of sample. Sample should be already sorted
+rank :: (G.Vector v a, G.Vector v Double, Eq a)
+     => (a -> a -> Bool)        -- Equivalence relation
+     -> v a                     -- Vector to rank
+     -> v Double
+rank eq vec = G.unfoldr go (Rank 0 (-1) 1 vec)
+  where
+    go (Rank 0 _ r v)
+      | G.null v  = Nothing
+      | otherwise =
+          case G.length h of
+            1 -> Just (r, Rank 0 0 (r+1) rest)
+            n -> go $ Rank { rankCnt = n
+                           , rankVal = 0.5 * (r*2 + fromIntegral (n-1))
+                           , rankNum = r + fromIntegral n
+                           , rankVec = rest
+                           }
+          where
+            (h,rest) = G.span (eq $ G.head v) v
+    go (Rank n val r v) = Just (val, Rank (n-1) val r v)
+{-# INLINE rank #-}
+
+
+-- Split tagged vector
+splitByTags :: (G.Vector v a, G.Vector v (Bool,a)) => v (Bool,a) -> (v a, v a)
+splitByTags vs = (G.map snd a, G.map snd b)
+  where
+    (a,b) = G.unstablePartition fst vs
+{-# INLINE splitByTags #-}

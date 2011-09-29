@@ -33,24 +33,37 @@ newtype ExponentialDistribution = ED {
     } deriving (Eq, Read, Show, Typeable)
 
 instance D.Distribution ExponentialDistribution where
-    cumulative = cumulative
+    cumulative      = cumulative
+    complCumulative = complCumulative
 
 instance D.ContDistr ExponentialDistribution where
     density  = density
     quantile = quantile
 
-instance D.Variance ExponentialDistribution where
-    variance (ED l) = 1 / (l * l)
-    {-# INLINE variance #-}
-
 instance D.Mean ExponentialDistribution where
     mean (ED l) = 1 / l
     {-# INLINE mean #-}
 
+instance D.Variance ExponentialDistribution where
+    variance (ED l) = 1 / (l * l)
+    {-# INLINE variance #-}
+
+instance D.MaybeMean ExponentialDistribution where
+    maybeMean = Just . D.mean
+
+instance D.MaybeVariance ExponentialDistribution where
+    maybeStdDev   = Just . D.stdDev
+    maybeVariance = Just . D.variance
+
 cumulative :: ExponentialDistribution -> Double -> Double
-cumulative (ED l) x | x < 0     = 0
+cumulative (ED l) x | x <= 0    = 0
                     | otherwise = 1 - exp (-l * x)
 {-# INLINE cumulative #-}
+
+complCumulative :: ExponentialDistribution -> Double -> Double
+complCumulative (ED l) x | x <= 0    = 1
+                         | otherwise = exp (-l * x)
+{-# INLINE complCumulative #-}
 
 density :: ExponentialDistribution -> Double -> Double
 density (ED l) x | x < 0     = 0
@@ -58,7 +71,11 @@ density (ED l) x | x < 0     = 0
 {-# INLINE density #-}
 
 quantile :: ExponentialDistribution -> Double -> Double
-quantile (ED l) p = -log (1 - p) / l
+quantile (ED l) p
+  | p == 1          = 1 / 0
+  | p >= 0 && p < 1 = -log (1 - p) / l
+  | otherwise       =
+    error $ "Statistics.Distribution.Exponential.quantile: p must be in [0,1] range. Got: "++show p
 {-# INLINE quantile #-}
 
 -- | Create an exponential distribution.
