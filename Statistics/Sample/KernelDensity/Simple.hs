@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 -- |
--- Module    : Statistics.KernelDensity
+-- Module    : Statistics.Sample.KernelDensity.Simple
 -- Copyright : (c) 2009 Bryan O'Sullivan
 -- License   : BSD3
 --
@@ -10,8 +10,14 @@
 --
 -- Kernel density estimation code, providing non-parametric ways to
 -- estimate the probability density function of a sample.
+--
+-- The techniques used by functions in this module are relatively
+-- fast, but they generally give inferior results to the KDE function
+-- in the main 'Statistics.KernelDensity' module (due to the
+-- oversmoothing documented for 'bandwidth' below).
 
-module Statistics.KernelDensity
+module Statistics.Sample.KernelDensity.Simple
+    {-# DEPRECATED "Use Statistics.Sample.KernelDensity instead." #-}
     (
     -- * Simple entry points
       epanechnikovPDF
@@ -36,6 +42,8 @@ module Statistics.KernelDensity
     -- ** Low-level estimation
     , estimatePDF
     , simplePDF
+    -- * References
+    -- $references
     ) where
 
 import Statistics.Constants (m_1_sqrt_2, m_2_sqrt_pi)
@@ -61,9 +69,12 @@ gaussianBW n = (4 / (n * 3)) ** 0.2
 type Bandwidth = Double
 
 -- | Compute the optimal bandwidth from the observed data for the
--- given kernel. This function uses estimate based on standard
--- deviation of sample which performs reasonably well for unimodal
--- distributions but leads to oversmoothing for more complex ones.
+-- given kernel.
+--
+-- This function uses an estimate based on the standard deviation of a
+-- sample (due to Deheuvels), which performs reasonably well for
+-- unimodal distributions but leads to oversmoothing for more complex
+-- ones.
 bandwidth :: G.Vector v Double =>
              (Double -> Bandwidth)
           -> v Double
@@ -172,3 +183,9 @@ gaussianPDF = simplePDF gaussianBW gaussianKernel 3
 errorShort :: String -> a
 errorShort func = error ("Statistics.KernelDensity." ++ func ++
                         ": at least two points required")
+
+-- $references
+--
+-- * Deheuvels, P. (1977) Estimation non paramétrique de la densité
+--   par histogrammes
+--   généralisés. Mhttp://archive.numdam.org/article/RSA_1977__25_3_5_0.pdf>
