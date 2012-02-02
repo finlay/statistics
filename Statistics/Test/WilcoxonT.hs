@@ -10,6 +10,9 @@
 -- The Wilcoxon matched-pairs signed-rank test is non-parametric test
 -- which could be used to whether two related samples have different
 -- means.
+--
+-- WARNING: current implementation contain critical bugs
+-- <https://github.com/bos/statistics/issues/18>
 module Statistics.Test.WilcoxonT (
     -- * Wilcoxon signed-rank matched-pair test
     wilcoxonMatchedPairTest
@@ -71,7 +74,7 @@ wilcoxonMatchedPairSignedRank a b = (          U.sum ranks1
 -- all the coefficients by r down the list.
 --
 -- This list will be processed lazily from the head.
-coefficients :: Int -> [Int]
+coefficients :: Int -> [Integer]
 coefficients 1 = [1, 1] -- 1 + x
 coefficients r = let coeffs = coefficients (r-1)
                      (firstR, rest) = splitAt r coeffs
@@ -83,7 +86,10 @@ coefficients r = let coeffs = coefficients (r-1)
 
 -- This list will be processed lazily from the head.
 summedCoefficients :: Int -> [Double]
-summedCoefficients = map fromIntegral . scanl1 (+) . coefficients
+summedCoefficients n
+  | n < 1     = error "Statistics.Test.WilcoxonT.summedCoefficients: nonpositive sample size"
+  | n > 1023  = error "Statistics.Test.WilcoxonT.summedCoefficients: sample is too large (see bug #18)"
+  | otherwise = map fromIntegral $ scanl1 (+) $ coefficients n
 
 -- | Tests whether a given result from a Wilcoxon signed-rank matched-pairs test
 -- is significant at the given level.
@@ -99,7 +105,7 @@ summedCoefficients = map fromIntegral . scanl1 (+) . coefficients
 -- order to 'wilcoxonMatchedPairSignedRank', or simply swap the values in the resulting
 -- pair before passing them to this function.
 wilcoxonMatchedPairSignificant ::
-     TestType            -- ^ Perform one-tailed test (see description above).
+     TestType            -- ^ Perform one- or two-tailed test (see description below).
   -> Int                 -- ^ The sample size from which the (T+,T-) values were derived.
   -> Double              -- ^ The p-value at which to test (e.g. 0.05)
   -> (Double, Double)    -- ^ The (T+, T-) values from 'wilcoxonMatchedPairSignedRank'.

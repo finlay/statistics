@@ -5,49 +5,54 @@ module Tests.NonparametricTest (
 
 
 import qualified Data.Vector.Unboxed as U
-import Test.HUnit                     (Test(..),assertEqual,assertBool)
-import qualified Test.Framework as TF
+import Test.HUnit                     (assertEqual)
+import Test.Framework
 import Test.Framework.Providers.HUnit
 
 import Statistics.Test.MannWhitneyU
 import Statistics.Test.WilcoxonT
 
+import Tests.Helpers
+import Tests.NonparametricTest.Table
+
+import Statistics.Test.KolmogorovSmirnov
+import Statistics.Distribution.Normal    (standard)
 
 
 
-nonparametricTests :: TF.Test
-nonparametricTests = TF.testGroup "Nonparametric tests"
-                   $ hUnitTestToTests =<< concat [ mannWhitneyTests
-                                                 , wilcoxonSumTests
-                                                 , wilcoxonPairTests
-                                                 ]
-
+nonparametricTests :: Test
+nonparametricTests = testGroup "Nonparametric tests"
+                   $ concat [ mannWhitneyTests
+                            , wilcoxonSumTests
+                            , wilcoxonPairTests
+                            , kolmogorovSmirnovDTest
+                            ]
 
 ----------------------------------------------------------------
 
 mannWhitneyTests :: [Test]
 mannWhitneyTests = zipWith test [(0::Int)..] testData ++
-  [TestCase $ assertEqual "Mann-Whitney U Critical Values, m=1"
-    (replicate (20*3) Nothing)
-    [mannWhitneyUCriticalValue (1,x) p | x <- [1..20], p <- [0.005,0.01,0.025]]
-  ,TestCase $ assertEqual "Mann-Whitney U Critical Values, m=2, p=0.025"
-    (replicate 7 Nothing ++ map Just [0,0,0,0,1,1,1,1,1,2,2,2,2])
-    [mannWhitneyUCriticalValue (2,x) 0.025 | x <- [1..20]]
-  ,TestCase $ assertEqual "Mann-Whitney U Critical Values, m=6, p=0.05"
-    (replicate 1 Nothing ++ map Just [0, 2,3,5,7,8,10,12,14,16,17,19,21,23,25,26,28,30,32])
-    [mannWhitneyUCriticalValue (6,x) 0.05 | x <- [1..20]]
-  ,TestCase $ assertEqual "Mann-Whitney U Critical Values, m=20, p=0.025"
-    (replicate 1 Nothing ++ map Just [2,8,14,20,27,34,41,48,55,62,69,76,83,90,98,105,112,119,127])
-    [mannWhitneyUCriticalValue (20,x) 0.025 | x <- [1..20]]
+  [ testEquality "Mann-Whitney U Critical Values, m=1"
+      (replicate (20*3) Nothing)
+      [mannWhitneyUCriticalValue (1,x) p | x <- [1..20], p <- [0.005,0.01,0.025]]
+  , testEquality "Mann-Whitney U Critical Values, m=2, p=0.025"
+      (replicate 7 Nothing ++ map Just [0,0,0,0,1,1,1,1,1,2,2,2,2])
+      [mannWhitneyUCriticalValue (2,x) 0.025 | x <- [1..20]]
+  , testEquality "Mann-Whitney U Critical Values, m=6, p=0.05"
+      (replicate 1 Nothing ++ map Just [0, 2,3,5,7,8,10,12,14,16,17,19,21,23,25,26,28,30,32])
+      [mannWhitneyUCriticalValue (6,x) 0.05 | x <- [1..20]]
+  , testEquality "Mann-Whitney U Critical Values, m=20, p=0.025"
+      (replicate 1 Nothing ++ map Just [2,8,14,20,27,34,41,48,55,62,69,76,83,90,98,105,112,119,127])
+      [mannWhitneyUCriticalValue (20,x) 0.025 | x <- [1..20]]
   ]
   where
     test n (a, b, c, d)
-      = TestCase $ do assertEqual ("Mann-Whitney U "     ++ show n) c us
-                      assertEqual ("Mann-Whitney U Sig " ++ show n)
-                        d $ mannWhitneyUSignificant TwoTailed (length a, length b) 0.05 us
+      = testCase "Mann-Whitney" $ do
+          assertEqual ("Mann-Whitney U "     ++ show n) c us
+          assertEqual ("Mann-Whitney U Sig " ++ show n) d ss
       where
         us = mannWhitneyU (U.fromList a) (U.fromList b)
-
+        ss = mannWhitneyUSignificant TwoTailed (length a, length b) 0.05 us
     -- List of (Sample A, Sample B, (Positive Rank, Negative Rank))
     testData :: [([Double], [Double], (Double, Double), Maybe TestResult)]
     testData = [ ( [3,4,2,6,2,5]
@@ -85,8 +90,8 @@ mannWhitneyTests = zipWith test [(0::Int)..] testData ++
 wilcoxonSumTests :: [Test]
 wilcoxonSumTests = zipWith test [(0::Int)..] testData
   where
-    test n (a, b, c) = TestCase $ assertEqual ("Wilcoxon Sum " ++ show n) c (wilcoxonRankSums (U.fromList a) (U.fromList b))
-
+    test n (a, b, c) = testCase "Wilcoxon Sum"
+                     $ assertEqual ("Wilcoxon Sum " ++ show n) c (wilcoxonRankSums (U.fromList a) (U.fromList b))
     -- List of (Sample A, Sample B, (Positive Rank, Negative Rank))
     testData :: [([Double], [Double], (Double, Double))]
     testData = [ ( [8.50,9.48,8.65,8.16,8.83,7.76,8.63]
@@ -102,23 +107,24 @@ wilcoxonSumTests = zipWith test [(0::Int)..] testData
 wilcoxonPairTests :: [Test]
 wilcoxonPairTests = zipWith test [(0::Int)..] testData ++
   -- Taken from the Mitic paper:
-  [ TestCase $ assertBool "Sig 16, 35" (to4dp 0.0467 $ wilcoxonMatchedPairSignificance 16 35)
-  , TestCase $ assertBool "Sig 16, 36" (to4dp 0.0523 $ wilcoxonMatchedPairSignificance 16 36)
-  , TestCase $ assertEqual "Wilcoxon critical values, p=0.05"
+  [ testAssertion "Sig 16, 35" (to4dp 0.0467 $ wilcoxonMatchedPairSignificance 16 35)
+  , testAssertion "Sig 16, 36" (to4dp 0.0523 $ wilcoxonMatchedPairSignificance 16 36)
+  , testEquality   "Wilcoxon critical values, p=0.05"
       (replicate 4 Nothing ++ map Just [0,2,3,5,8,10,13,17,21,25,30,35,41,47,53,60,67,75,83,91,100,110,119])
       [wilcoxonMatchedPairCriticalValue x 0.05 | x <- [1..27]]
-  , TestCase $ assertEqual "Wilcoxon critical values, p=0.025"
+  , testEquality "Wilcoxon critical values, p=0.025"
       (replicate 5 Nothing ++ map Just [0,2,3,5,8,10,13,17,21,25,29,34,40,46,52,58,65,73,81,89,98,107])
       [wilcoxonMatchedPairCriticalValue x 0.025 | x <- [1..27]]
-  , TestCase $ assertEqual "Wilcoxon critical values, p=0.01"
+  , testEquality "Wilcoxon critical values, p=0.01"
       (replicate 6 Nothing ++ map Just [0,1,3,5,7,9,12,15,19,23,27,32,37,43,49,55,62,69,76,84,92])
       [wilcoxonMatchedPairCriticalValue x 0.01 | x <- [1..27]]
-  , TestCase $ assertEqual "Wilcoxon critical values, p=0.005"
+  , testEquality "Wilcoxon critical values, p=0.005"
       (replicate 7 Nothing ++ map Just [0,1,3,5,7,9,12,15,19,23,27,32,37,42,48,54,61,68,75,83])
       [wilcoxonMatchedPairCriticalValue x 0.005 | x <- [1..27]]
   ]
   where
-    test n (a, b, c) = TestCase $ assertEqual ("Wilcoxon Paired " ++ show n) c (wilcoxonMatchedPairSignedRank (U.fromList a) (U.fromList b))
+    test n (a, b, c) = testEquality ("Wilcoxon Paired " ++ show n) c res
+      where res = (wilcoxonMatchedPairSignedRank (U.fromList a) (U.fromList b))
 
     -- List of (Sample A, Sample B, (Positive Rank, Negative Rank))
     testData :: [([Double], [Double], (Double, Double))]
@@ -146,3 +152,82 @@ wilcoxonPairTests = zipWith test [(0::Int)..] testData ++
                  )
                ]
     to4dp tgt x = x >= tgt - 0.00005 && x < tgt + 0.00005
+
+
+
+----------------------------------------------------------------
+-- K-S test
+----------------------------------------------------------------
+
+
+kolmogorovSmirnovDTest :: [Test]
+kolmogorovSmirnovDTest =
+  [ testAssertion "K-S D statistics" $
+    and [ eq 1e-6 (kolmogorovSmirnovD standard (toU sample)) reference
+        | (reference,sample) <- tableKSD
+        ]
+  , testAssertion "K-S 2-sample statistics" $
+    and [ eq 1e-6 (kolmogorovSmirnov2D (toU xs) (toU ys)) reference
+        | (reference,xs,ys) <- tableKS2D
+        ]
+  , testAssertion "K-S probability" $
+    and [ eq 1e-14 (kolmogorovSmirnovProbability n d) p
+        | (d,n,p) <- testData
+        ]
+  ]
+  where
+    toU = U.fromList
+    -- Test data for the calculation of cumulative probability 
+    -- P(D[n] < d).
+    -- 
+    -- Test data is:
+    --    (D[n], n, p)
+    -- Table is generated using sample program from paper
+    testData :: [(Double,Int,Double)]
+    testData = 
+      [ (0.09           ,    3, 0                   )
+      , (0.2            ,    3, 0.00177777777777778 )
+      , (0.301          ,    3, 0.116357025777778   )
+      , (0.392          ,    3, 0.383127210666667   )
+      , (0.5003         ,    3, 0.667366306558667   )
+      , (0.604          ,    3, 0.861569877333333   )
+      , (0.699          ,    3, 0.945458198         )
+      , (0.802          ,    3, 0.984475216         )
+      , (0.9            ,    3, 0.998               )
+      , (0.09           ,    5, 0                   )
+      , (0.2            ,    5, 0.0384              )
+      , (0.301          ,    5, 0.33993786080016    )
+      , (0.392          ,    5, 0.66931908083712    )
+      , (0.5003         ,    5, 0.888397260183794   )
+      , (0.604          ,    5, 0.971609957879808   )
+      , (0.699          ,    5, 0.994331075994008   )
+      , (0.802          ,    5, 0.999391366368064   )
+      , (0.9            ,    5, 0.99998             )
+      , (0.09           ,    8, 3.37615237575e-06   )
+      , (0.2            ,    8, 0.151622071801758   )
+      , (0.301          ,    8, 0.613891042670582   )
+      , (0.392          ,    8, 0.871491561427005   )
+      , (0.5003         ,    8, 0.977534089199071   )
+      , (0.604          ,    8, 0.997473116268255   )
+      , (0.699          ,    8, 0.999806082005123   )
+      , (0.802          ,    8, 0.999995133786947   )
+      , (0.9            ,    8, 0.99999998          )
+      , (0.09           ,   10, 3.89639433093119e-05)
+      , (0.2            ,   10, 0.25128096          )
+      , (0.301          ,   10, 0.732913126355935   )
+      , (0.392          ,   10, 0.932185254518767   )
+      , (0.5003         ,   10, 0.992276179340446   )
+      , (0.604          ,   10, 0.999495533516769   )
+      , (0.699          ,   10, 0.999979691783985   )
+      , (0.802          ,   10, 0.999999801409237   )
+      , (0.09           ,   20, 0.00794502217168886 )
+      , (0.2            ,   20, 0.647279826376584   )
+      , (0.301          ,   20, 0.958017466965765   )
+      , (0.392          ,   20, 0.997206424843499   )
+      , (0.5003         ,   20, 0.999962641414228   )
+      , (0.09           ,   30, 0.0498147538075168  )
+      , (0.2            ,   30, 0.842030838984526   )
+      , (0.301          ,   30, 0.993403560017612   )
+      , (0.392          ,   30, 0.99988478803318    )
+      , (0.09           ,  100, 0.629367974413669   )
+      ]

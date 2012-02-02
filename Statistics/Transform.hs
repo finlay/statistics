@@ -29,14 +29,15 @@ module Statistics.Transform
     , ifft
     ) where
 
-import Control.Monad (when)
-import Control.Monad.ST (ST)
-import Data.Bits (shiftL, shiftR)
-import Data.Complex (Complex(..), conjugate, realPart)
-import Statistics.Math (log2)
-import qualified Data.Vector.Generic as G
+import Control.Monad         (when)
+import Control.Monad.ST      (ST)
+import Data.Bits             (shiftL, shiftR)
+import Data.Complex          (Complex(..), conjugate, realPart)
+import Numeric.SpecFunctions (log2)
+import qualified Data.Vector.Generic         as G
 import qualified Data.Vector.Generic.Mutable as M
-import qualified Data.Vector.Unboxed as U
+import qualified Data.Vector.Unboxed         as U
+
 
 type CD = Complex Double
 
@@ -55,7 +56,10 @@ dct_ xs = G.map realPart $ G.zipWith (*) weights (fft interleaved)
       where n = fi len
     len = G.length xs
 
--- | Inverse discrete cosine transform (DCT-III).
+-- | Inverse discrete cosine transform (DCT-III). It's inverse of
+-- 'dct' only up to scale parameter:
+--
+-- > (idct . dct) x = (* lenngth x)
 idct :: U.Vector Double -> U.Vector Double
 idct = idct_ . G.map (:+0)
 
