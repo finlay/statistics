@@ -25,7 +25,7 @@ module Statistics.Distribution.Gamma
     ) where
 
 import Data.Typeable (Typeable)
-import Numeric.MathFunctions.Constants (m_pos_inf, m_NaN)
+import Numeric.MathFunctions.Constants (m_pos_inf, m_neg_inf, m_NaN)
 import Numeric.SpecFunctions           (incompleteGamma, invIncompleteGamma)
 import Statistics.Distribution.Poisson.Internal as Poisson
 import qualified Statistics.Distribution        as D
@@ -54,6 +54,7 @@ instance D.Distribution GammaDistribution where
 instance D.ContDistr GammaDistribution where
     density    = density
     quantile   = quantile
+    logDensity = logDensity
 
 instance D.Variance GammaDistribution where
     variance (GD a l) = a * l * l
@@ -81,6 +82,16 @@ density (GD a l) x
   | a < 1             = Poisson.probability (x/l) a * a / x
   | otherwise         = Poisson.probability (x/l) (a-1) / l
 {-# INLINE density #-}
+
+logDensity :: GammaDistribution -> Double -> Double
+logDensity (GD a l) x
+  | a < 0 || l <= 0   = m_NaN
+  | x <= 0            = m_neg_inf
+  | a == 0            = if x == 0 then m_pos_inf else m_neg_inf
+  | x == 0            = if a < 1 then m_pos_inf else if a > 1 then m_neg_inf else 1/l
+  | a < 1             = Poisson.probability (x/l) a * a / x
+  | otherwise         = Poisson.probability (x/l) (a-1) / l
+{-# INLINE logDensity #-}
 
 cumulative :: GammaDistribution -> Double -> Double
 cumulative (GD k l) x

@@ -74,7 +74,10 @@ class Distribution d => ContDistr d where
     -- of [0,1] range function should call 'error'
     quantile :: d -> Double -> Double
 
-
+    -- | Log density function. Calculate the natural logarithm of the
+    -- density. This maybe more efficient in some cases.
+    logDensity :: d -> Double -> Double
+    logDensity dist = log . density dist
 
 -- | Type class for distributions with mean. 'maybeMean' should return
 --   'Nothing' if it's undefined for current value of data
