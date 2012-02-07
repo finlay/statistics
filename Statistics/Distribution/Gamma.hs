@@ -88,9 +88,9 @@ logDensity (GD a l) x
   | a < 0 || l <= 0   = m_NaN
   | x <= 0            = m_neg_inf
   | a == 0            = if x == 0 then m_pos_inf else m_neg_inf
-  | x == 0            = if a < 1 then m_pos_inf else if a > 1 then m_neg_inf else 1/l
-  | a < 1             = Poisson.probability (x/l) a * a / x
-  | otherwise         = Poisson.probability (x/l) (a-1) / l
+  | x == 0            = if a < 1 then m_pos_inf else if a > 1 then m_neg_inf else - (log l)
+  | a < 1             = Poisson.logProbability (x/l) a + (log (a / x))
+  | otherwise         = Poisson.logProbability (x/l) (a-1) - (log l)
 {-# INLINE logDensity #-}
 
 cumulative :: GammaDistribution -> Double -> Double
